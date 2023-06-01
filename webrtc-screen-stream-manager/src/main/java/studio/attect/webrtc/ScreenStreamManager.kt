@@ -13,7 +13,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import org.webrtc.DataChannel
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
@@ -22,11 +21,12 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
-import org.webrtc.RtpReceiver
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
+import org.webrtc.VideoTrack
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.CoroutineContext
 
 class ScreenStreamManager(val context: Context, val display: Display, val windowManager: WindowManager) : CoroutineScope {
@@ -36,9 +36,9 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
     override val coroutineContext: CoroutineContext = Dispatchers.Default + job + CoroutineName("ScreenStreamManager")
 
     /**
-     * 是否已经开始
+     * 已经就绪
      */
-    var isStarted = false
+    var isPrepared = false
         private set
 
     /**
@@ -61,6 +61,7 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
     private lateinit var videoCapture: ScreenCapturerAndroid
 
     private lateinit var mediaStream: MediaStream
+    private lateinit var videoTrack: VideoTrack
 
     /**
      * 提供EGL的渲染上下文及EGL的版本兼容
@@ -86,9 +87,9 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
     }
 
     /**
-     * 点对点连接
+     * 点对点连接Map
      */
-    private var peerConnection: PeerConnection? = null
+    private var peerConnectionMap: ConcurrentHashMap<String, PeerConnection> = ConcurrentHashMap()
 
     /**
      * 观察屏幕旋转的协程工作
@@ -111,29 +112,29 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
     private lateinit var onStopHandler: () -> Unit
 
     /**
-     * 开始
+     * 准备推流媒体
      *
      * 需要提供来自[MediaProjectionManager.createScreenCaptureIntent]的[mediaProjectionIntent]
      */
-    fun start(mediaProjectionIntent: Intent, sdpHandler: (sessionDescription: SessionDescription) -> Unit) {
+    fun prepareMedia(mediaProjectionIntent: Intent) {
         if (!this::onLocalIceCandidateHandler.isInitialized) {
             throw IllegalStateException("请先设置onIceCandidate")
         }
-        if (isStarted) throw IllegalStateException("已经开始")
-        isStarted = true
+        if (isPrepared) throw IllegalStateException("已经就绪")
+        isPrepared = true
 
         videoCapture = ScreenCapturerAndroid(mediaProjectionIntent, object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
                 if (!isScreenSizeChangeStop) {
-                    stop()
+                    release()
                 }
             }
         })
         eglBase = EglBase.create()
 
 
-        val videoEncoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
+        val videoEncoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, false)
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions())
@@ -148,10 +149,10 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
 
         videoCapture.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
 
-        val videoTrack = peerConnectionFactory.createVideoTrack("screen", videoSource)
+        videoTrack = peerConnectionFactory.createVideoTrack("screen", videoSource)
         val currentDisplayMetrics = displayMetrics
 
-        videoCapture.startCapture(currentDisplayMetrics.widthPixels, currentDisplayMetrics.heightPixels, 60)
+        videoCapture.startCapture(currentDisplayMetrics.widthPixels / 2, currentDisplayMetrics.heightPixels / 2, 30)
 
         watchScreenRotationJob = launch {
             var currentWidth = currentDisplayMetrics.widthPixels
@@ -168,44 +169,28 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
-                    videoCapture.startCapture(currentWidth, currentHeight, 60)
+                    videoCapture.startCapture(currentWidth / 2, currentHeight / 2, 30)
                 }
             }
         }
 
-        peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, object : PeerConnectionObserver() {
-            override fun onIceCandidate(candidate: IceCandidate) {
-                if (this@ScreenStreamManager::onLocalIceCandidateHandler.isInitialized) {
-                    onLocalIceCandidateHandler.invoke(candidate)
-                }
-            }
-        })
 
-        mediaStream = peerConnectionFactory.createLocalMediaStream("device")
-        mediaStream.addTrack(videoTrack)
-        peerConnection?.addStream(mediaStream)
-
-        val mediaConstraints = MediaConstraints()
-        mediaConstraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-
-        peerConnection?.createOffer(object : SessionDescriptionObserver() {
-            override fun onCreateSuccess(sdp: SessionDescription) {
-                peerConnection?.setLocalDescription(SessionDescriptionObserver(), sdp)
-                sdpHandler.invoke(sdp)
-            }
-        }, mediaConstraints)
     }
 
     /**
      * 停止
      * 必须先开始，才能停止
      */
-    fun stop() {
-        if (!isStarted) throw IllegalStateException("没有开始")
+    fun release() {
+        if (!isPrepared) throw IllegalStateException("没有就绪")
+        isPrepared = false
 
-        runCatching {
-            peerConnection?.dispose()
-        }.exceptionOrNull()?.printStackTrace()
+        peerConnectionMap.keys().iterator().forEach { key ->
+            runCatching {
+                peerConnectionMap[key]?.dispose()
+            }.exceptionOrNull()?.printStackTrace()
+        }
+        peerConnectionMap.clear()
 
         runCatching {
             videoCapture.stopCapture()
@@ -220,10 +205,60 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
             peerConnectionFactory.dispose()
         }.exceptionOrNull()?.printStackTrace()
 
-        isStarted = false
         if (this::onStopHandler.isInitialized) {
             onStopHandler.invoke()
         }
+    }
+
+    fun createPeerConnection(key: String, sdpObserver: SimpleSessionDescriptionObserver, peerConnectionObserver: SimplePeerConnectionObserver) {
+        if (!isPrepared) throw IllegalStateException("媒体没有准备好，请先调用prepareMedia")
+        if (peerConnectionMap.contains(key)) {
+            peerConnectionMap[key]?.dispose()
+        }
+        val mediaConstraints = MediaConstraints()
+        mediaConstraints.mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+
+        val peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, peerConnectionObserver) ?: throw RuntimeException("创建PeerConnection失败")
+
+        val mediaStream = peerConnectionFactory.createLocalMediaStream("receiver-$key")
+        mediaStream.addTrack(videoTrack)
+        peerConnection.addStream(mediaStream)
+
+        peerConnection.createOffer(object : SdpObserver {
+            override fun onCreateSuccess(sdp: SessionDescription) {
+                peerConnection.setLocalDescription(SimpleSessionDescriptionObserver(), sdp)
+                sdpObserver.onCreateSuccess(sdp)
+            }
+
+            override fun onSetSuccess() {
+                sdpObserver.onSetSuccess()
+            }
+
+            override fun onCreateFailure(error: String?) {
+                sdpObserver.onCreateFailure(error)
+            }
+
+            override fun onSetFailure(error: String?) {
+                sdpObserver.onSetFailure(error)
+            }
+
+        }, mediaConstraints)
+
+        peerConnectionMap[key] = peerConnection
+    }
+
+    fun getPeerConnection(key: String): PeerConnection? {
+        if (!isPrepared) throw IllegalStateException("媒体没有准备好，请先调用prepareMedia")
+        return peerConnectionMap[key]
+    }
+
+    fun deposePeerConnection(key: String) {
+        peerConnectionMap[key]?.close()
+        peerConnectionMap.remove(key)
+    }
+
+    fun peerConnectionSize(): Int {
+        return peerConnectionMap.size
     }
 
     /**
@@ -233,89 +268,9 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
         onLocalIceCandidateHandler = handler
     }
 
-    /**
-     * 设置远端回复
-     */
-    fun setRemoteAnswer(sdp: SessionDescription) {
-        if (!isStarted) throw IllegalStateException("没有start")
-        peerConnection?.setRemoteDescription(SessionDescriptionObserver(), sdp)
-    }
-
-    /**
-     * 添加远端连接候选
-     */
-    fun addRemoteIceCandidate(iceCandidate: IceCandidate) {
-        if (!isStarted) throw IllegalStateException("没有start")
-        peerConnection?.addIceCandidate(iceCandidate)
-    }
-
     fun onStop(block: () -> Unit) {
         onStopHandler = block
     }
 
-    private open class PeerConnectionObserver : PeerConnection.Observer {
-        override fun onSignalingChange(newState: PeerConnection.SignalingState) {
 
-        }
-
-        override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState) {
-
-        }
-
-        override fun onIceConnectionReceivingChange(receiving: Boolean) {
-
-        }
-
-        override fun onIceGatheringChange(newState: PeerConnection.IceGatheringState?) {
-
-        }
-
-        override fun onIceCandidate(candidate: IceCandidate) {
-
-        }
-
-        override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {
-
-        }
-
-        override fun onAddStream(stream: MediaStream?) {
-
-        }
-
-        override fun onRemoveStream(stream: MediaStream?) {
-
-        }
-
-        override fun onDataChannel(dataChannel: DataChannel?) {
-
-        }
-
-        override fun onRenegotiationNeeded() {
-
-        }
-
-        override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {
-
-        }
-
-    }
-
-    private open class SessionDescriptionObserver : SdpObserver {
-        override fun onCreateSuccess(sdp: SessionDescription) {
-
-        }
-
-        override fun onSetSuccess() {
-
-        }
-
-        override fun onCreateFailure(error: String?) {
-
-        }
-
-        override fun onSetFailure(error: String?) {
-
-        }
-
-    }
 }

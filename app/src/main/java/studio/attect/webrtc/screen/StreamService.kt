@@ -32,7 +32,8 @@ import okhttp3.WebSocketListener
 import org.webrtc.IceCandidate
 import org.webrtc.SessionDescription
 import studio.attect.webrtc.ScreenStreamManager
-import java.util.Locale
+import studio.attect.webrtc.SimplePeerConnectionObserver
+import studio.attect.webrtc.SimpleSessionDescriptionObserver
 import kotlin.coroutines.CoroutineContext
 
 class StreamService : Service(), CoroutineScope {
@@ -57,19 +58,11 @@ class StreamService : Service(), CoroutineScope {
     private val windowManager: WindowManager by lazy { getSystemService(Context.WINDOW_SERVICE) as WindowManager }
     private val currentDisplay: Display by lazy { windowManager.defaultDisplay }
     var mediaProjectionIntent: Intent? = null
-        set(value) {
-            field = value
-            if (clientOnline) {
-                startStream()
-            }
-        }
 
     private lateinit var screenStreamManager: ScreenStreamManager
     private val okHttpClient = OkHttpClient()
     private lateinit var webSocket: WebSocket
     private lateinit var websocketUrl: String
-    private var clientOnline = false
-
     private val gson = Gson()
 
     override fun onBind(intent: Intent): IBinder {
@@ -99,7 +92,7 @@ class StreamService : Service(), CoroutineScope {
             webSocket.close(1000, "normal")
         }
         if (this::screenStreamManager.isInitialized) {
-            screenStreamManager.stop()
+            screenStreamManager.release()
         }
         stopSelf()
     }
@@ -116,20 +109,17 @@ class StreamService : Service(), CoroutineScope {
         }
     }
 
-    fun startStream() {
+    fun prepareStream() {
         Log.d("SERVICE", "startStream intent is null:${mediaProjectionIntent == null}")
         mediaProjectionIntent?.let { intent ->
-            screenStreamManager.start(intent) { sessionDescription ->
-                Log.d("SERVICE", "sdp created")
-                webSocket.send("description|" + gson.toJson(sessionDescription.toSessionDescriptionData()))
-            }
+            screenStreamManager.prepareMedia(intent)
         }
     }
 
-    fun stopStream() {
-        Log.d("SERVICE", "stopStream")
-        if (screenStreamManager.isStarted) {
-            screenStreamManager.stop()
+    fun releaseStream() {
+        Log.d("SERVICE", "releaseStream")
+        if (screenStreamManager.isPrepared) {
+            screenStreamManager.release()
         }
     }
 
@@ -169,27 +159,42 @@ class StreamService : Service(), CoroutineScope {
         override fun onMessage(webSocket: WebSocket, text: String) {
             if (!text.contains("|")) return
             val command = text.substringBefore("|")
-            val dataText = text.substringAfter("|")
-            Log.d("SERVICE", "command:$command")
+            val clientKey = text.substring(command.length + 1).substringBefore("|")
+            val dataString = text.substring(command.length + clientKey.length + 2).substringAfter("|")
+            Log.d("SERVICE", "command:$command clientKey:$clientKey")
             when (command) {
-                "client-online" -> {
-                    clientOnline = true
-                    startStream()
+                "receiver-online" -> {
+                    if (screenStreamManager.peerConnectionSize() == 0) {
+                        prepareStream()
+                    }
+                    screenStreamManager.createPeerConnection(key = clientKey, object : SimpleSessionDescriptionObserver() {
+                        override fun onCreateSuccess(sdp: SessionDescription) {
+                            super.onCreateSuccess(sdp)
+                            webSocket.send("offer|$clientKey|${gson.toJson(sdp.toSessionDescriptionData())}")
+                        }
+                    }, object : SimplePeerConnectionObserver() {
+                        override fun onIceCandidate(candidate: IceCandidate) {
+                            super.onIceCandidate(candidate)
+                            webSocket.send("onIceCandidate|$clientKey|${gson.toJson(candidate.toIceCandidateData())}")
+                        }
+                    })
                 }
 
-                "client-offline" -> {
-                    clientOnline = false
-                    stopStream()
+                "receiver-offline" -> {
+                    screenStreamManager.deposePeerConnection(clientKey)
+                    if (screenStreamManager.peerConnectionSize() == 0) {
+                        releaseStream()
+                    }
                 }
 
-                "description" -> {
-                    val sdp = gson.fromJson(dataText, SessionDescriptionData::class.java).toSessionDescription()
-                    screenStreamManager.setRemoteAnswer(sdp)
+                "answer" -> {
+                    val sdp = gson.fromJson(dataString, SessionDescriptionData::class.java).toSessionDescription()
+                    screenStreamManager.getPeerConnection(clientKey)?.setRemoteDescription(SimpleSessionDescriptionObserver(), sdp)
                 }
 
                 "onIceCandidate" -> {
-                    val iceCandidate = gson.fromJson(dataText, IceCandidateData::class.java).toIceCandidate()
-                    screenStreamManager.addRemoteIceCandidate(iceCandidate)
+                    val iceCandidate = gson.fromJson(dataString, IceCandidateData::class.java).toIceCandidate()
+                    screenStreamManager.getPeerConnection(clientKey)?.addIceCandidate(iceCandidate)
                 }
             }
         }
@@ -213,7 +218,7 @@ class StreamService : Service(), CoroutineScope {
         }
 
         fun stopStreamAndRetry() {
-            stopStream()
+            releaseStream()
             if (!running) return
             launch {
                 delay(1000)
@@ -261,7 +266,7 @@ data class SessionDescriptionData(val type: String, val sdp: String) {
 }
 
 fun SessionDescription.toSessionDescriptionData(): SessionDescriptionData {
-    return SessionDescriptionData(type.name.toLowerCase(Locale.ENGLISH), description)
+    return SessionDescriptionData(type.name.lowercase(), description)
 }
 
 data class IceCandidateData(
