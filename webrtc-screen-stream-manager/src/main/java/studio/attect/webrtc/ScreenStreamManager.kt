@@ -5,6 +5,7 @@ import android.content.Intent
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.Display
 import android.view.WindowManager
 import kotlinx.coroutines.CoroutineName
@@ -152,7 +153,11 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
         videoTrack = peerConnectionFactory.createVideoTrack("screen", videoSource)
         val currentDisplayMetrics = displayMetrics
 
-        videoCapture.startCapture(currentDisplayMetrics.widthPixels / 2, currentDisplayMetrics.heightPixels / 2, 30)
+        val scale = 1.0
+        val cWidth = (currentDisplayMetrics.widthPixels*scale).toInt()
+        val cHeight = (currentDisplayMetrics.heightPixels*scale).toInt()
+        videoCapture.startCapture(cWidth,cHeight , 15)
+        Log.d("DEBUG","cWdith:$cWidth cHeight:$cHeight")
 
         watchScreenRotationJob = launch {
             var currentWidth = currentDisplayMetrics.widthPixels
@@ -169,7 +174,7 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
-                    videoCapture.startCapture(currentWidth / 2, currentHeight / 2, 30)
+                    videoCapture.startCapture((currentWidth*scale).toInt(), (currentHeight*scale).toInt(), 15)
                 }
             }
         }
@@ -220,9 +225,9 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
 
         val peerConnection = peerConnectionFactory.createPeerConnection(rtcConfig, peerConnectionObserver) ?: throw RuntimeException("创建PeerConnection失败")
 
-        val mediaStream = peerConnectionFactory.createLocalMediaStream("receiver-$key")
-        mediaStream.addTrack(videoTrack)
-        peerConnection.addStream(mediaStream)
+//        val mediaStream = peerConnectionFactory.createLocalMediaStream("receiver-$key")
+//        mediaStream.addTrack(videoTrack)
+        peerConnection.addTrack(videoTrack)
 
         peerConnection.createOffer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription) {

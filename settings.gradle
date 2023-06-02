@@ -16,3 +16,4 @@ rootProject.name = "ScreenStreamWebRtc"
 include ':app'
 include ':webrtc'
 include ':webrtc-screen-stream-manager'
+include ':stream-webrtc-android'
