@@ -1,5 +1,6 @@
 package studio.attect.webrtc.screen
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -20,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import studio.attect.webrtc.screen.ui.theme.ScreenStreamWebRtcTheme
 
@@ -40,10 +42,12 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, getString(R.string.no_screen_capture_permission), Toast.LENGTH_LONG).show()
         }
     }
+
     private val streamServiceConnection = StreamServiceConnection()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 0)
         setContent {
             ScreenStreamWebRtcTheme {
                 // A surface container using the 'background' color from the theme

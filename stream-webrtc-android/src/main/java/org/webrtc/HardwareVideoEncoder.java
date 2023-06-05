@@ -237,25 +237,27 @@ class HardwareVideoEncoder implements VideoEncoder {
     encodeThreadChecker.checkIsOnValidThread();
 
     nextPresentationTimestampUs = 0;
-    lastKeyFrameNs = -1;
+      lastKeyFrameNs = -1;
 
-    try {
-      codec = mediaCodecWrapperFactory.createByCodecName(codecName);
-    } catch (IOException | IllegalArgumentException e) {
-      Logging.e(TAG, "Cannot create media encoder " + codecName);
-      return VideoCodecStatus.FALLBACK_SOFTWARE;
-    }
+      try {
+          codec = mediaCodecWrapperFactory.createByCodecName(codecName);
+      } catch (IOException | IllegalArgumentException e) {
+          Logging.e(TAG, "Cannot create media encoder " + codecName);
+          return VideoCodecStatus.FALLBACK_SOFTWARE;
+      }
 
-    final int colorFormat = useSurfaceMode ? surfaceColorFormat : yuvColorFormat;
-    try {
-      MediaFormat format = MediaFormat.createVideoFormat(codecType.mimeType(), width, height);
-      format.setInteger(MediaFormat.KEY_BIT_RATE, adjustedBitrate);
-      format.setInteger(KEY_BITRATE_MODE, VIDEO_ControlRateConstant);
-      format.setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormat);
-      format.setFloat(
-          MediaFormat.KEY_FRAME_RATE, (float) bitrateAdjuster.getAdjustedFramerateFps());
-      format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keyFrameIntervalSec);
-      if (codecType == VideoCodecMimeType.H264) {
+      final int colorFormat = useSurfaceMode ? surfaceColorFormat : yuvColorFormat;
+      Logging.d(TAG, "colorFormat:" + colorFormat);
+
+      try {
+          MediaFormat format = MediaFormat.createVideoFormat(codecType.mimeType(), width, height);
+          format.setInteger(MediaFormat.KEY_BIT_RATE, adjustedBitrate);
+          format.setInteger(KEY_BITRATE_MODE, VIDEO_ControlRateConstant);
+          format.setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormat);
+          format.setFloat(
+                  MediaFormat.KEY_FRAME_RATE, (float) bitrateAdjuster.getAdjustedFramerateFps());
+          format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, keyFrameIntervalSec);
+          if (codecType == VideoCodecMimeType.H264) {
         String profileLevelId = params.get(VideoCodecInfo.H264_FMTP_PROFILE_LEVEL_ID);
         if (profileLevelId == null) {
           profileLevelId = VideoCodecInfo.H264_CONSTRAINED_BASELINE_3_1;

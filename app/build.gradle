@@ -64,9 +64,9 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 
-    implementation project(":webrtc")
 //    implementation "io.getstream:stream-webrtc-android:1.0.2"
-//    implementation project(":stream-webrtc-android")
+    implementation project(":stream-webrtc-android")
+//    implementation project(":webrtc")
     implementation project(":webrtc-screen-stream-manager")
     implementation 'com.squareup.okhttp3:okhttp:4.11.0'
     implementation 'com.google.code.gson:gson:2.10.1'

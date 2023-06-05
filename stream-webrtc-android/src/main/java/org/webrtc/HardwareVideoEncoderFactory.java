@@ -99,27 +99,30 @@ public class HardwareVideoEncoderFactory implements VideoEncoderFactory {
     VideoCodecMimeType type = VideoCodecMimeType.valueOf(input.getName());
     MediaCodecInfo info = findCodecForType(type);
 
-    if (info == null) {
-      return null;
-    }
-
-    String codecName = info.getName();
-    String mime = type.mimeType();
-    Integer surfaceColorFormat = MediaCodecUtils.selectColorFormat(
-        MediaCodecUtils.TEXTURE_COLOR_FORMATS, info.getCapabilitiesForType(mime));
-    Integer yuvColorFormat = MediaCodecUtils.selectColorFormat(
-        MediaCodecUtils.ENCODER_COLOR_FORMATS, info.getCapabilitiesForType(mime));
-
-    if (type == VideoCodecMimeType.H264) {
-      boolean isHighProfile = H264Utils.isSameH264Profile(
-          input.params, MediaCodecUtils.getCodecProperties(type, /* highProfile= */ true));
-      boolean isBaselineProfile = H264Utils.isSameH264Profile(
-          input.params, MediaCodecUtils.getCodecProperties(type, /* highProfile= */ false));
-
-      if (!isHighProfile && !isBaselineProfile) {
-        return null;
+      if (info == null) {
+          return null;
       }
-      if (isHighProfile && !isH264HighProfileSupported(info)) {
+
+      String codecName = info.getName();
+      String mime = type.mimeType();
+      Integer surfaceColorFormat = MediaCodecUtils.selectColorFormat(
+              MediaCodecUtils.TEXTURE_COLOR_FORMATS, info.getCapabilitiesForType(mime));
+      Integer yuvColorFormat = MediaCodecUtils.selectColorFormat(
+              MediaCodecUtils.ENCODER_COLOR_FORMATS, info.getCapabilitiesForType(mime));
+      Logging.d(TAG, "code:" + codecName + " mine:" + mime + " surfaceColorFormat:" + surfaceColorFormat + " yuvColorFormat:" + yuvColorFormat);
+      for (int color : info.getCapabilitiesForType(mime).colorFormats) {
+          Logging.d("TAG", "encodeColorFormats:" + color);
+      }
+      if (type == VideoCodecMimeType.H264) {
+          boolean isHighProfile = H264Utils.isSameH264Profile(
+                  input.params, MediaCodecUtils.getCodecProperties(type, /* highProfile= */ true));
+          boolean isBaselineProfile = H264Utils.isSameH264Profile(
+                  input.params, MediaCodecUtils.getCodecProperties(type, /* highProfile= */ false));
+
+          if (!isHighProfile && !isBaselineProfile) {
+              return null;
+          }
+          if (isHighProfile && !isH264HighProfileSupported(info)) {
         return null;
       }
     }
@@ -272,8 +275,7 @@ public class HardwareVideoEncoderFactory implements VideoEncoderFactory {
   }
 
   private boolean isH264HighProfileSupported(MediaCodecInfo info) {
-//    return enableH264HighProfile && Build.VERSION.SDK_INT > Build.VERSION_CODES.M
-//        && info.getName().startsWith(EXYNOS_PREFIX);
-    return false;
+      return enableH264HighProfile && Build.VERSION.SDK_INT > Build.VERSION_CODES.M
+              && info.getName().startsWith(EXYNOS_PREFIX);
   }
 }

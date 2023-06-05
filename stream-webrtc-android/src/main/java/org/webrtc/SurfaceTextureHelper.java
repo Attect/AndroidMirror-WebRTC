@@ -215,7 +215,8 @@ public class SurfaceTextureHelper {
    */
   public void startListening(final VideoSink listener) {
     if (this.listener != null || this.pendingListener != null) {
-      throw new IllegalStateException("SurfaceTextureHelper listener has already been set.");
+//      throw new IllegalStateException("SurfaceTextureHelper listener has already been set.");
+      return;
     }
     this.pendingListener = listener;
     handler.post(setListenerRunnable);

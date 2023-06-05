@@ -10,15 +10,13 @@
 
 package org.webrtc;
 
-import android.app.Activity;
 import android.content.Context;
-import android.content.Intent;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.projection.MediaProjection;
-import android.media.projection.MediaProjectionManager;
 import android.view.Surface;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 /**
@@ -38,7 +36,6 @@ public class ScreenCapturerAndroid implements VideoCapturer, VideoSink {
   // DPI for VirtualDisplay, does not seem to matter for us.
   private static final int VIRTUAL_DISPLAY_DPI = 400;
 
-  private final Intent mediaProjectionPermissionResultData;
   private final MediaProjection.Callback mediaProjectionCallback;
 
   private int width;
@@ -49,21 +46,20 @@ public class ScreenCapturerAndroid implements VideoCapturer, VideoSink {
   private long numCapturedFrames;
   @Nullable private MediaProjection mediaProjection;
   private boolean isDisposed;
-  @Nullable private MediaProjectionManager mediaProjectionManager;
 
   /**
    * Constructs a new Screen Capturer.
    *
-   * @param mediaProjectionPermissionResultData the result data of MediaProjection permission
-   *     activity; the calling app must validate that result code is Activity.RESULT_OK before
-   *     calling this method.
+   * @param mediaProjection         MediaProjection .
    * @param mediaProjectionCallback MediaProjection callback to implement application specific
-   *     logic in events such as when the user revokes a previously granted capture permission.
-  **/
-  public ScreenCapturerAndroid(Intent mediaProjectionPermissionResultData,
-      MediaProjection.Callback mediaProjectionCallback) {
-    this.mediaProjectionPermissionResultData = mediaProjectionPermissionResultData;
+   *                                logic in events such as when the user revokes a previously granted capture permission.
+   **/
+  public ScreenCapturerAndroid(@NonNull MediaProjection mediaProjection,
+                               MediaProjection.Callback mediaProjectionCallback) {
+    this.mediaProjection = mediaProjection;
     this.mediaProjectionCallback = mediaProjectionCallback;
+
+
   }
 
   private void checkNotDisposed() {
@@ -94,8 +90,6 @@ public class ScreenCapturerAndroid implements VideoCapturer, VideoSink {
     }
     this.surfaceTextureHelper = surfaceTextureHelper;
 
-    mediaProjectionManager = (MediaProjectionManager) applicationContext.getSystemService(
-        Context.MEDIA_PROJECTION_SERVICE);
   }
 
   @Override
@@ -107,9 +101,6 @@ public class ScreenCapturerAndroid implements VideoCapturer, VideoSink {
 
     this.width = width;
     this.height = height;
-
-    mediaProjection = mediaProjectionManager.getMediaProjection(
-        Activity.RESULT_OK, mediaProjectionPermissionResultData);
 
     // Let MediaProjection callback use the SurfaceTextureHelper thread.
     mediaProjection.registerCallback(mediaProjectionCallback, surfaceTextureHelper.getHandler());
@@ -139,8 +130,8 @@ public class ScreenCapturerAndroid implements VideoCapturer, VideoSink {
           // Unregister the callback before stopping, otherwise the callback recursively
           // calls this method.
           mediaProjection.unregisterCallback(mediaProjectionCallback);
-          mediaProjection.stop();
-          mediaProjection = null;
+//          mediaProjection.stop();
+//          mediaProjection = null;
         }
       }
     });

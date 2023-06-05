@@ -1,5 +1,6 @@
 package studio.attect.webrtc
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjection
@@ -14,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.webrtc.AudioTrack
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
@@ -27,6 +29,12 @@ import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoTrack
+import org.webrtc.audio.AudioDeviceModule
+import org.webrtc.audio.JavaAudioDeviceModule
+import org.webrtc.audio.JavaAudioDeviceModule.AudioRecordErrorCallback
+import org.webrtc.audio.JavaAudioDeviceModule.AudioRecordStateCallback
+import org.webrtc.audio.JavaAudioDeviceModule.AudioTrackErrorCallback
+import org.webrtc.audio.JavaAudioDeviceModule.AudioTrackStateCallback
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.CoroutineContext
 
@@ -68,6 +76,12 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
      * 提供EGL的渲染上下文及EGL的版本兼容
      */
     private lateinit var eglBase: EglBase
+
+    /**
+     * 音频设备模块
+     */
+    private lateinit var audioDeviceModule: AudioDeviceModule
+    private lateinit var audioTrack: AudioTrack
 
     /**
      * 点对点连接工厂
@@ -112,6 +126,12 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
      */
     private lateinit var onStopHandler: () -> Unit
 
+    private val mediaProjectionManager by lazy {
+        context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    }
+
+    private var mediaProjection: MediaProjection? = null
+
     /**
      * 准备推流媒体
      *
@@ -123,8 +143,10 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
         }
         if (isPrepared) throw IllegalStateException("已经就绪")
         isPrepared = true
+        val currentMediaProjection = mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, mediaProjectionIntent)
+        mediaProjection = currentMediaProjection
 
-        videoCapture = ScreenCapturerAndroid(mediaProjectionIntent, object : MediaProjection.Callback() {
+        videoCapture = ScreenCapturerAndroid(currentMediaProjection, object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
                 if (!isScreenSizeChangeStop) {
@@ -138,23 +160,28 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
         val videoEncoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, false)
         val videoDecoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
+        audioDeviceModule = createJavaAudioDevice()
+        audioDeviceModule.setMediaProjection(currentMediaProjection)
+
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions())
         peerConnectionFactory = PeerConnectionFactory.builder()
             .setOptions(PeerConnectionFactory.Options())
             .setVideoEncoderFactory(videoEncoderFactory)
             .setVideoDecoderFactory(videoDecoderFactory)
+            .setAudioDeviceModule(audioDeviceModule)
             .createPeerConnectionFactory()
 
         val surfaceTextureHelper = SurfaceTextureHelper.create("ScreenStreamManager", eglBase.eglBaseContext)
         val videoSource = peerConnectionFactory.createVideoSource(videoCapture.isScreencast)
+//        videoSource.adaptOutputFormat(960,540,540,960,60)
 
         videoCapture.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
 
         videoTrack = peerConnectionFactory.createVideoTrack("screen", videoSource)
         val currentDisplayMetrics = displayMetrics
 
-        val scale = 1.0
-        val cWidth = (currentDisplayMetrics.widthPixels*scale).toInt()
+        val scale = 1
+        val cWidth = (currentDisplayMetrics.widthPixels * scale).toInt()
         val cHeight = (currentDisplayMetrics.heightPixels*scale).toInt()
         videoCapture.startCapture(cWidth,cHeight , 15)
         Log.d("DEBUG","cWdith:$cWidth cHeight:$cHeight")
@@ -174,10 +201,19 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
-                    videoCapture.startCapture((currentWidth*scale).toInt(), (currentHeight*scale).toInt(), 15)
+                    videoCapture.startCapture((currentWidth * scale).toInt(), (currentHeight * scale).toInt(), 15)
                 }
             }
         }
+
+        val audioSource = peerConnectionFactory.createAudioSource(MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "false"))
+            mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "false"))
+            mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "false"))
+            mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "false"))
+        })
+        audioTrack = peerConnectionFactory.createAudioTrack("deviceSound", audioSource)
+        audioTrack.setEnabled(true)
 
 
     }
@@ -207,8 +243,15 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
         }.exceptionOrNull()?.printStackTrace()
 
         runCatching {
+            audioDeviceModule.release()
+        }.exceptionOrNull()?.printStackTrace()
+
+        runCatching {
             peerConnectionFactory.dispose()
         }.exceptionOrNull()?.printStackTrace()
+
+        mediaProjection?.stop()
+        mediaProjection = null
 
         if (this::onStopHandler.isInitialized) {
             onStopHandler.invoke()
@@ -228,6 +271,9 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
 //        val mediaStream = peerConnectionFactory.createLocalMediaStream("receiver-$key")
 //        mediaStream.addTrack(videoTrack)
         peerConnection.addTrack(videoTrack)
+        peerConnection.addTrack(audioTrack)
+        peerConnection.setAudioRecording(true)
+        peerConnection.setBitrate(1024 * 1024 * 512, 1024 * 1024 * 1024, Integer.MAX_VALUE)
 
         peerConnection.createOffer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription) {
@@ -275,6 +321,66 @@ class ScreenStreamManager(val context: Context, val display: Display, val window
 
     fun onStop(block: () -> Unit) {
         onStopHandler = block
+    }
+
+    private fun createJavaAudioDevice(): AudioDeviceModule {
+        val audioRecordErrorCallback = object : AudioRecordErrorCallback {
+            override fun onWebRtcAudioRecordInitError(errorMessage: String?) {
+                Log.d("DEBUG", "onWebRtcAudioRecordInitError:$errorMessage")
+            }
+
+            override fun onWebRtcAudioRecordStartError(errorCode: JavaAudioDeviceModule.AudioRecordStartErrorCode?, errorMessage: String?) {
+                Log.d("DEBUG", "onWebRtcAudioRecordStartError errorCode:$errorCode message:$errorMessage")
+            }
+
+            override fun onWebRtcAudioRecordError(errorMessage: String?) {
+                Log.d("DEBUG", "onWebRtcAudioRecordError:$errorMessage")
+            }
+        }
+
+        val audioTrackErrorCallback = object : AudioTrackErrorCallback {
+            override fun onWebRtcAudioTrackInitError(errorMessage: String?) {
+                Log.d("DEBUG", "onWebRtcAudioTrackInitError:$errorMessage")
+            }
+
+            override fun onWebRtcAudioTrackStartError(errorCode: JavaAudioDeviceModule.AudioTrackStartErrorCode?, errorMessage: String?) {
+                Log.d("DEBUG", "onWebRtcAudioTrackStartError errorCode:$errorCode message:$errorMessage")
+            }
+
+            override fun onWebRtcAudioTrackError(errorMessage: String?) {
+                Log.d("DEBUG", "onWebRtcAudioTrackError:$errorMessage")
+            }
+        }
+
+        val audioRecordStateCallback = object : AudioRecordStateCallback {
+            override fun onWebRtcAudioRecordStart() {
+                Log.d("DEBUG", "开始录制音频")
+            }
+
+            override fun onWebRtcAudioRecordStop() {
+                Log.d("DEBUG", "停止录制音频")
+            }
+        }
+
+        val audioRecordTrackStateCallback = object : AudioTrackStateCallback {
+            override fun onWebRtcAudioTrackStart() {
+                Log.d("DEBUG", "音频轨道开始")
+            }
+
+            override fun onWebRtcAudioTrackStop() {
+                Log.d("DEBUG", "音频轨道结束")
+            }
+
+        }
+
+        return JavaAudioDeviceModule.builder(context)
+            .setUseHardwareAcousticEchoCanceler(false)
+            .setUseHardwareNoiseSuppressor(false)
+            .setAudioRecordErrorCallback(audioRecordErrorCallback)
+            .setAudioTrackErrorCallback(audioTrackErrorCallback)
+            .setAudioRecordStateCallback(audioRecordStateCallback)
+            .setAudioTrackStateCallback(audioRecordTrackStateCallback)
+            .createAudioDeviceModule()
     }
 
 
