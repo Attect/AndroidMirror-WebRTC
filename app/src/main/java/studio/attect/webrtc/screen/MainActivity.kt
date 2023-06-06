@@ -2,6 +2,7 @@ package studio.attect.webrtc.screen
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
@@ -47,7 +48,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val streamServiceConnection = StreamServiceConnection()
+    private val streamServiceConnection = object : StreamServiceConnection() {
+        override fun onServiceDisconnected(name: ComponentName?) {
+            super.onServiceDisconnected(name)
+            this@MainActivity.mediaProjectionIntent = null
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

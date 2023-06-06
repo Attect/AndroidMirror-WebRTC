@@ -112,7 +112,13 @@ class StreamService : Service(), CoroutineScope {
     fun prepareStream() {
         Log.d("SERVICE", "startStream intent is null:${mediaProjectionIntent == null}")
         mediaProjectionIntent?.let { intent ->
-            screenStreamManager.prepareMedia(intent)
+            try {
+                screenStreamManager.prepareMedia(intent)
+            } catch (e: SecurityException) {
+                Log.e("SERVICE", "MediaProjection可能已经失效，需要重新申请")
+                releaseStream()
+                stopSelf()
+            }
         }
     }
 
@@ -243,7 +249,7 @@ class StreamService : Service(), CoroutineScope {
 class StreamServiceBinder(val streamService: StreamService) : Binder()
 
 
-class StreamServiceConnection : ServiceConnection {
+open class StreamServiceConnection : ServiceConnection {
     var isConnected by mutableStateOf(false)
     lateinit var streamService: StreamService
     override fun onServiceConnected(name: ComponentName, service: IBinder) {
