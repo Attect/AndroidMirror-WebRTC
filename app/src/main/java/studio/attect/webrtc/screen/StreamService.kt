@@ -164,8 +164,12 @@ class StreamService : Service(), CoroutineScope {
             Log.d("SERVICE", "command:$command clientKey:$clientKey")
             when (command) {
                 "receiver-online" -> {
-                    if (screenStreamManager.peerConnectionSize() == 0) {
+                    if (screenStreamManager.peerConnectionSize() == 0 || !screenStreamManager.isPrepared) {
                         prepareStream()
+                    }
+                    if (!screenStreamManager.isPrepared) {
+                        Log.e("SERVICE", "ScreenStreamManager无法准备串流内容")
+                        return
                     }
                     screenStreamManager.createPeerConnection(key = clientKey, object : SimpleSessionDescriptionObserver() {
                         override fun onCreateSuccess(sdp: SessionDescription) {
