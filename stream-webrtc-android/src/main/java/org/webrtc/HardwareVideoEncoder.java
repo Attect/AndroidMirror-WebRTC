@@ -45,7 +45,7 @@ class HardwareVideoEncoder implements VideoEncoder {
   private static final int VIDEO_AVC_PROFILE_HIGH = 8;
   private static final int VIDEO_AVC_LEVEL_3 = 0x100;
 
-  private static final int MAX_VIDEO_FRAMERATE = 30;
+  private static final int MAX_VIDEO_FRAMERATE = 60;
 
   // See MAX_ENCODER_Q_SIZE in androidmediaencoder.cc.
   private static final int MAX_ENCODER_Q_SIZE = 2;

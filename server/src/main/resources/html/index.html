@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>接收端</title>
+    <style>
+        .message-box {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: lightgray;
+            text-align: center;
+            user-select: none
+        }
+
+    </style>
+</head>
+<body>
+<div style="min-width: 384px;">
+    <video id="video" style="width: 100%;height: 70vh" autoplay controls></video>
+    <div id="streamStatus" class="message-box">等待推流</div>
+    <div id="serverStatus" class="message-box">推流端状态：未知</div>
+    <div id="peerConnectionState" class="message-box">点对点状态：未知</div>
+</div>
+</body>
+<script>
+    let video = document.getElementById("video")
+    let streamStatus = document.getElementById("streamStatus")
+    let serverStatus = document.getElementById("serverStatus")
+    let peerConnectionState = document.getElementById("peerConnectionState")
+    let key = parseInt((Math.random() * 10000000)+"")
+    let webSocket = new WebSocket("ws://127.0.0.1:9999/ws/receiver/"+key)
+
+    /**
+     *
+     * @type {MediaStream|null}
+     */
+    let currentStream = null;
+    /**
+     * RTCPeerConnection
+     * @type {RTCPeerConnection|null}
+     */
+    let rtcPeerConnection = null;
+
+
+    function initRTC() {
+        let mediaStream = new MediaStream()
+        video.srcObject = mediaStream
+
+        rtcPeerConnection = new RTCPeerConnection()
+        rtcPeerConnection.onicecandidate = onIceCandidate
+        // rtcPeerConnection.onaddstream = onAddStream
+        rtcPeerConnection.ontrack = function (event) {
+            console.log("ontrack", event, event.streams.length)
+            mediaStream.addTrack(event.track)
+            // if (event.streams && event.streams[0]) {
+            //     console.log("直接使用streams[0]")
+            //     video.srcObject = event.streams[0]
+            // } else {
+            //     let stream = new MediaStream()
+            //     stream.addTrack(event.track)
+            //     video.srcObject = stream
+            // }
+            video.play()
+            streamStatus.innerText = "收到推流（Track）"
+        }
+
+        rtcPeerConnection.onconnectionstatechange = (ev) => {
+            peerConnectionState.innerText = "点对点连接状态：" + rtcPeerConnection.connectionState
+        }
+    }
+
+    webSocket.onmessage = function (event) {
+        let content = event.data
+        let splitIndex = content.indexOf("|")
+        let command = content.substring(0, splitIndex)
+        let dataString = content.substring(splitIndex + 1)
+        console.log("command", command)
+        if (command === "offer") {
+            console.log("receive description")
+            if (rtcPeerConnection != null) {
+                let description = JSON.parse(dataString)
+                rtcPeerConnection.setRemoteDescription(description)
+                rtcPeerConnection.createAnswer().then((answer) => {
+                    rtcPeerConnection.setLocalDescription(answer)
+                    console.log("answer", answer)
+                    webSocket.send("answer|" + JSON.stringify(answer))
+                })
+            }
+
+        } else if (command === "onIceCandidate") {
+            if (rtcPeerConnection != null) {
+                let candidate = new RTCIceCandidate(JSON.parse(dataString))
+                console.log("receive onIceCandidate", candidate)
+                rtcPeerConnection.addIceCandidate(candidate)
+            }
+
+        } else if (command === "device-online") {
+            serverStatus.innerText = "推流端状态：在线"
+            initRTC()
+        } else if (command === "device-offline") {
+            serverStatus.innerText = "推流端状态：离线"
+            rtcPeerConnection.close()
+        }
+    }
+
+    function onIceCandidate(event) {
+        if (event.candidate) {
+            console.log("send iceCandidate")
+            webSocket.send("onIceCandidate|" + JSON.stringify(event.candidate))
+        }
+    }
+
+    function onAddStream(event) {
+        console.log("onAddStream", event)
+        streamStatus.innerText = "收到推流（Stream）"
+        if (window.URL) {
+            video.srcObject = event.stream
+            console.log("srcObject", video.srcObject)
+        } else {
+            video.src = event.stream
+        }
+        video.play()
+    }
+
+
+</script>
+</html>

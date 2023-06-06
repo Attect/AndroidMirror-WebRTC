@@ -26,6 +26,10 @@ import androidx.core.content.ContextCompat
 import studio.attect.webrtc.screen.ui.theme.ScreenStreamWebRtcTheme
 
 class MainActivity : ComponentActivity() {
+    /**
+     * 信令服务器url地址
+     */
+    private val serverUrl = "ws://192.168.8.100:9999/ws/sender"
 
     private var mediaProjectionIntent: Intent? by mutableStateOf(null)
 
@@ -54,13 +58,6 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Column {
                         Button(onClick = {
-                            if (mediaProjectionIntent == null) {
-                                mediaPermissionLauncher.launch(mediaProjectionManager)
-                            }
-                        }, enabled = mediaProjectionIntent == null) {
-                            Text(text = "申请屏幕捕获权限")
-                        }
-                        Button(onClick = {
                             if (!streamServiceConnection.isConnected) {
                                 val serviceIntent = Intent(this@MainActivity, StreamService::class.java)
                                 ContextCompat.startForegroundService(this@MainActivity, serviceIntent)
@@ -70,9 +67,16 @@ class MainActivity : ComponentActivity() {
                             Text(text = "启动后台服务")
                         }
                         Button(onClick = {
+                            if (mediaProjectionIntent == null) {
+                                mediaPermissionLauncher.launch(mediaProjectionManager)
+                            }
+                        }, enabled = mediaProjectionIntent == null && streamServiceConnection.isConnected) {
+                            Text(text = "申请捕获权限")
+                        }
+                        Button(onClick = {
                             if (streamServiceConnection.isConnected && !streamServiceConnection.streamService.isWebSocketConnected) {
                                 streamServiceConnection.streamService.apply {
-                                    setWebSocketUrl("ws://192.168.8.100:9999/ws/sender")
+                                    setWebSocketUrl(serverUrl)
                                     connectWebSocket()
                                 }
                             }
